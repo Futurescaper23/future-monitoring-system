@@ -997,10 +997,64 @@ textarea {
   flex-wrap: wrap;
 }
 
+.shell-footer a {
+  color: #cdeefe;
+  text-decoration: none;
+}
+
+.shell-footer a:hover {
+  text-decoration: underline;
+}
+
 .shell-footer__toggle {
   background: rgba(56, 189, 248, 0.14);
   color: #cdeefe;
   border-color: rgba(56, 189, 248, 0.24);
+}
+
+.legal-shell {
+  max-width: 980px;
+  padding-top: 18px;
+}
+
+.legal-panel {
+  padding: 26px;
+}
+
+.legal-section {
+  margin-top: 28px;
+}
+
+.legal-section h2 {
+  margin-bottom: 10px;
+  font-size: 1.2rem;
+}
+
+.legal-section p,
+.legal-section li {
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.legal-section ul {
+  margin: 10px 0 0;
+  padding-left: 20px;
+}
+
+.legal-contact-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.legal-contact-card {
+  color: inherit;
+  text-decoration: none;
+}
+
+.legal-contact-card h2 {
+  font-size: 1.2rem;
+  overflow-wrap: anywhere;
 }
 
 .layer-panel {
@@ -2035,6 +2089,7 @@ a { color: var(--accent); }
   .weather-shell__intro { grid-template-columns: 1fr; }
   .shell-footer { flex-direction: column; }
   .shell-footer__actions { flex-direction: column; align-items: flex-start; }
+  .legal-contact-grid { grid-template-columns: 1fr; }
   .section-metric-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   #selectedAreaAssets { grid-template-columns: 1fr; }
   #overviewAreaGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -2067,6 +2122,19 @@ a { color: var(--accent); }
     border-left: 0;
     border-right: 0;
     box-shadow: none;
+  }
+
+  .legal-shell {
+    max-width: none;
+    padding-top: 0;
+  }
+
+  .legal-panel {
+    padding: 16px 14px;
+  }
+
+  .legal-section {
+    margin-top: 22px;
   }
 
   .card {
