@@ -46,6 +46,8 @@
   sectionArea: null
     };
 
+const VALID_TABS = new Set(["overview", "areas", "weather", "volume", "layers", "sections", "admin"]);
+
   const EXPLICIT_SECTION_IMAGE_TRACKS = {
     area1: [
       { upper: { x: 27.25, y: 4.86 }, lower: { x: 15.85, y: 46.18 } },
@@ -535,8 +537,67 @@ async function bootstrap() {
   state.primarySurveyId = state.surveyId;
   state.secondarySurveyId = currentProject().surveys.find((survey) => survey.id !== state.surveyId)?.id || state.surveyId;
   state.sectionComparisonSurveyIds = defaultSectionComparisonSurveyIds();
+  applyUrlState();
   bindEvents();
   renderAll();
+}
+
+function applyUrlState() {
+  const params = new URLSearchParams(window.location.search);
+  const project = currentProject();
+  const surveyId = params.get("survey") || params.get("surveyId");
+  const survey = project.surveys.find((item) => item.id === surveyId) || project.surveys[0];
+  state.surveyId = survey.id;
+  state.primarySurveyId = state.surveyId;
+  state.secondarySurveyId = preferredSecondarySurveyId();
+
+  const areaId = normaliseAreaId(params.get("area") || params.get("areaId"));
+  const area = areas().find((item) => item.id === areaId) || areas()[0];
+  state.areaId = area.id;
+
+  const sectionId = normaliseSectionId(params.get("section") || params.get("sectionId"));
+  const section = area.sections.find((item) => item.id === sectionId) || area.sections[0];
+  state.sectionId = section.id;
+
+  const requestedTab = params.get("tab") || params.get("view");
+  const inferredTab = sectionId ? "sections" : areaId ? "areas" : state.activeTab;
+  const tab = VALID_TABS.has(requestedTab) ? requestedTab : inferredTab;
+  state.activeTab = !state.adminMode && tab === "admin" ? "overview" : tab;
+  const overviewMode = params.get("mode");
+  if (["information", "survey", "help"].includes(overviewMode)) {
+    state.overviewMode = overviewMode;
+  }
+  state.sectionComparisonSurveyIds = defaultSectionComparisonSurveyIds();
+}
+
+function syncUrlState() {
+  if (!state.dataset) {
+    return;
+  }
+  const params = new URLSearchParams(window.location.search);
+  ["tab", "view", "survey", "surveyId", "area", "areaId", "section", "sectionId", "mode"].forEach((key) => {
+    params.delete(key);
+  });
+  params.set("tab", state.activeTab);
+  params.set("survey", state.surveyId);
+  params.set("area", state.areaId);
+  params.set("section", state.sectionId);
+  if (state.activeTab === "overview" && state.overviewMode !== "information") {
+    params.set("mode", state.overviewMode);
+  }
+
+  const query = params.toString();
+  const nextUrl = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash || ""}`;
+  window.history.replaceState(null, "", nextUrl);
+}
+
+function normaliseAreaId(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(?:area|a)?(\d+)$/i);
+  if (!match) {
+    return text;
+  }
+  return `area${Number(match[1])}`;
 }
 
 function bindEvents() {
@@ -551,6 +612,7 @@ function bindEvents() {
     renderLayers();
     renderSections();
     renderAdmin();
+    syncUrlState();
   });
 
   els.primaryCompareSelect.addEventListener("change", () => {
@@ -625,18 +687,21 @@ function bindEvents() {
     state.overviewMode = "information";
     state.overviewIndexOpen = false;
     renderOverview();
+    syncUrlState();
   });
 
   els.overviewSurveyBtn.addEventListener("click", () => {
     state.overviewMode = "survey";
     state.overviewIndexOpen = false;
     renderOverview();
+    syncUrlState();
   });
 
   els.overviewHelpBtn.addEventListener("click", () => {
     state.overviewMode = "help";
     state.overviewIndexOpen = false;
     renderOverview();
+    syncUrlState();
   });
 
   els.overviewIndexBtn.addEventListener("click", (event) => {
@@ -665,6 +730,7 @@ function bindEvents() {
     state.sectionId = els.sectionSelect.value;
     state.sectionHoverDistance = null;
     renderSections();
+    syncUrlState();
   });
 
   els.sectionOrthoBtn.addEventListener("click", () => {
@@ -1886,7 +1952,11 @@ async function renderSections() {
   const area = applySharedSectionGeometry(baseArea, geometryMap);
   state.sectionArea = area;
   const section = area.sections.find((item) => item.id === state.sectionId) || area.sections[0];
+  const previousSectionId = state.sectionId;
   state.sectionId = section.id;
+  if (previousSectionId !== state.sectionId) {
+    syncUrlState();
+  }
   fillSelect(els.sectionSelect, area.sections.map((item) => [item.id, item.label]), state.sectionId);
   els.sectionPanelTitle.textContent = `${area.label} ${section.label}`;
   updateSectionFullscreenButton();
@@ -2804,6 +2874,7 @@ function updateArea(areaId) {
   renderLayers();
   renderSections();
   renderAdmin();
+  syncUrlState();
 }
 
 function normaliseSectionId(value) {
@@ -3035,6 +3106,7 @@ function drawChart(profiles) {
       state.sectionId = button.dataset.sectionHotspot;
       state.sectionHoverDistance = null;
       renderSections();
+      syncUrlState();
     });
   });
 
@@ -3043,6 +3115,7 @@ function drawChart(profiles) {
         state.sectionId = button.dataset.sectionQuick;
         state.sectionHoverDistance = null;
         renderSections();
+        syncUrlState();
       });
     });
 
@@ -4994,6 +5067,7 @@ function activateTab(tabName) {
   document.querySelectorAll(".tab-panel").forEach((panel) => {
     panel.classList.toggle("active", panel.dataset.panel === safeTab);
   });
+  syncUrlState();
 }
 
 function syncAdminVisibility() {

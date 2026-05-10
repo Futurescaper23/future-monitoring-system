@@ -19,6 +19,7 @@ const mimeTypes = {
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".png": "image/png",
+  ".svg": "image/svg+xml; charset=utf-8",
   ".csv": "text/csv; charset=utf-8"
 };
 
