@@ -3446,8 +3446,7 @@ function updateSectionMapMarker(rows, section, hoverDistance = state.sectionHove
 }
 
 function sectionPointForRow(section, row, rows) {
-  const measuredRows = rows.filter((item) => item.height !== 0);
-  const sourceRows = measuredRows.length >= 2 ? measuredRows : rows;
+  const sourceRows = Array.isArray(rows) && rows.length ? rows : [row];
   const minDistance = Math.min(...sourceRows.map((item) => item.distance));
   const maxDistance = Math.max(...sourceRows.map((item) => item.distance));
   const span = Math.max(1, maxDistance - minDistance);
