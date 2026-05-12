@@ -30,6 +30,13 @@
   panY: 0,
   isPanning: false,
   activeViewerPointerId: null,
+  viewerPointers: new Map(),
+  pinchStartDistance: null,
+  pinchStartScale: 1,
+  pinchStartPanX: 0,
+  pinchStartPanY: 0,
+  pinchStartCenter: null,
+  pinchStageCenter: null,
   startX: 0,
   startY: 0,
   startPanX: 0,
@@ -820,14 +827,20 @@ function bindEvents() {
     if (event.target.closest("#transparencyControls")) {
       return;
     }
+    state.viewerPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (state.viewerPointers.size === 2) {
+      beginViewerPinch();
+      event.preventDefault();
+      return;
+    }
     if (state.compareMode === "slider") {
       const handleRect = els.sliderHandle.getBoundingClientRect();
       const insideHandle = event.clientX >= handleRect.left && event.clientX <= handleRect.right
         && event.clientY >= handleRect.top && event.clientY <= handleRect.bottom;
-      if (insideHandle) {
+      if (insideHandle || state.scale <= 1) {
         state.isDraggingSwipe = true;
         state.activeViewerPointerId = event.pointerId;
-        els.sliderHandle.setPointerCapture(event.pointerId);
+        event.target.setPointerCapture?.(event.pointerId);
         event.preventDefault();
         updateSwipeFromClientX(event.clientX);
         return;
@@ -842,12 +855,20 @@ function bindEvents() {
     state.startY = event.clientY;
     state.startPanX = state.panX;
     state.startPanY = state.panY;
-    els.viewerStage.setPointerCapture(event.pointerId);
+    event.target.setPointerCapture?.(event.pointerId);
     event.preventDefault();
     applyViewTransform();
   });
 
   els.viewerStage.addEventListener("pointermove", (event) => {
+    if (state.viewerPointers.has(event.pointerId)) {
+      state.viewerPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    }
+    if (state.viewerPointers.size >= 2 && state.pinchStartDistance) {
+      updateViewerPinch();
+      event.preventDefault();
+      return;
+    }
     if (state.activeViewerPointerId !== null && event.pointerId !== state.activeViewerPointerId) {
       return;
     }
@@ -868,6 +889,12 @@ function bindEvents() {
   });
 
   const endPointerInteraction = (event) => {
+    state.viewerPointers.delete(event.pointerId);
+    if (state.viewerPointers.size < 2) {
+      state.pinchStartDistance = null;
+      state.pinchStartCenter = null;
+      state.pinchStageCenter = null;
+    }
     if (state.activeViewerPointerId !== null && event.pointerId !== state.activeViewerPointerId) {
       return;
     }
@@ -3373,17 +3400,20 @@ function drawSectionChart(profiles, section, anchorSurveyId = state.surveyId) {
     <text x="20" y="${height / 2}" text-anchor="middle" fill="#aab9d3" font-size="13" transform="rotate(-90 20 ${height / 2})">Height (m)</text>
   `;
 
-  els.profileChart.onmousemove = (event) => {
+  const chartMetrics = {
+    width,
+    height,
+    pad,
+    minX,
+    xSpan,
+    plotWidth,
+    minY,
+    ySpan,
+    plotHeight
+  };
+  const updateSectionHoverFromPointer = (event) => {
     const nextHoverDistance = chartHoverDistanceFromPointer(event, els.profileChart, activeProfiles, {
-      width,
-      height,
-      pad,
-      minX,
-      xSpan,
-      plotWidth,
-      minY,
-      ySpan,
-      plotHeight
+      ...chartMetrics
     });
     if (nextHoverDistance === null) {
       if (state.sectionHoverDistance !== null) {
@@ -3401,14 +3431,39 @@ function drawSectionChart(profiles, section, anchorSurveyId = state.surveyId) {
       updateSectionHoverFeedback(profiles, section, currentSurvey());
     }
   };
-
-  els.profileChart.onmouseleave = () => {
+  const clearSectionHover = () => {
     if (state.sectionHoverDistance !== null) {
       state.sectionHoverDistance = null;
       drawSectionChart(profiles, section, anchorSurveyId);
       renderSectionComparisonSummary(profiles, anchorSurveyId);
       updateSectionHoverFeedback(profiles, section, currentSurvey());
     }
+  };
+
+  els.profileChart.onmousemove = updateSectionHoverFromPointer;
+  els.profileChart.onpointerdown = (event) => {
+    if (event.pointerType === "mouse") {
+      return;
+    }
+    event.preventDefault();
+    els.profileChart.setPointerCapture?.(event.pointerId);
+    updateSectionHoverFromPointer(event);
+  };
+  els.profileChart.onpointermove = (event) => {
+    if (event.pointerType === "mouse") {
+      return;
+    }
+    event.preventDefault();
+    updateSectionHoverFromPointer(event);
+  };
+  els.profileChart.onpointerup = (event) => {
+    els.profileChart.releasePointerCapture?.(event.pointerId);
+  };
+  els.profileChart.onpointercancel = (event) => {
+    els.profileChart.releasePointerCapture?.(event.pointerId);
+  };
+  els.profileChart.onmouseleave = () => {
+    clearSectionHover();
   };
 }
 
@@ -4536,11 +4591,78 @@ function zoom(multiplier) {
   applyViewTransform();
 }
 
+function viewerPointerPair() {
+  const pointers = Array.from(state.viewerPointers.values());
+  if (pointers.length < 2) {
+    return null;
+  }
+  return [pointers[0], pointers[1]];
+}
+
+function pointerDistance(first, second) {
+  return Math.hypot(second.x - first.x, second.y - first.y);
+}
+
+function pointerCenter(first, second) {
+  return {
+    x: (first.x + second.x) / 2,
+    y: (first.y + second.y) / 2
+  };
+}
+
+function beginViewerPinch() {
+  const pair = viewerPointerPair();
+  if (!pair) {
+    return;
+  }
+  const [first, second] = pair;
+  const stageRect = els.viewerStage.getBoundingClientRect();
+  state.isPanning = false;
+  state.isDraggingSwipe = false;
+  state.activeViewerPointerId = null;
+  state.pinchStartDistance = Math.max(1, pointerDistance(first, second));
+  state.pinchStartScale = state.scale;
+  state.pinchStartPanX = state.panX;
+  state.pinchStartPanY = state.panY;
+  state.pinchStartCenter = pointerCenter(first, second);
+  state.pinchStageCenter = {
+    x: stageRect.left + (stageRect.width / 2),
+    y: stageRect.top + (stageRect.height / 2)
+  };
+}
+
+function updateViewerPinch() {
+  const pair = viewerPointerPair();
+  if (!pair || !state.pinchStartDistance || !state.pinchStartCenter || !state.pinchStageCenter) {
+    return;
+  }
+  const [first, second] = pair;
+  const nextCenter = pointerCenter(first, second);
+  const nextDistance = Math.max(1, pointerDistance(first, second));
+  const nextScale = clamp(state.pinchStartScale * (nextDistance / state.pinchStartDistance), 1, 8);
+  const startRelativeX = state.pinchStartCenter.x - state.pinchStageCenter.x - state.pinchStartPanX;
+  const startRelativeY = state.pinchStartCenter.y - state.pinchStageCenter.y - state.pinchStartPanY;
+  const scaleRatio = nextScale / Math.max(state.pinchStartScale, 0.001);
+
+  state.scale = nextScale;
+  state.panX = nextCenter.x - state.pinchStageCenter.x - (startRelativeX * scaleRatio);
+  state.panY = nextCenter.y - state.pinchStageCenter.y - (startRelativeY * scaleRatio);
+  if (state.scale === 1) {
+    state.panX = 0;
+    state.panY = 0;
+  }
+  applyViewTransform();
+}
+
 function resetView() {
   state.scale = 1;
   state.panX = 0;
   state.panY = 0;
   state.isPanning = false;
+  state.isDraggingSwipe = false;
+  state.activeViewerPointerId = null;
+  state.viewerPointers.clear();
+  state.pinchStartDistance = null;
   applyViewTransform();
 }
 
