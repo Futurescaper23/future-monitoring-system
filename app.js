@@ -30,6 +30,10 @@
   panY: 0,
   isPanning: false,
   activeViewerPointerId: null,
+  activeTouchGesture: false,
+  touchGestureMode: null,
+  lastTouchX: 0,
+  lastTouchY: 0,
   viewerPointers: new Map(),
   pinchStartDistance: null,
   pinchStartScale: 1,
@@ -41,6 +45,9 @@
   startY: 0,
   startPanX: 0,
   startPanY: 0,
+  sectionPointerId: null,
+  pendingSectionHoverDistance: null,
+  pendingSectionHoverFrame: null,
   adminMode: false,
   activeTab: "overview",
   weatherFrameSrc: "",
@@ -824,6 +831,9 @@ function bindEvents() {
     });
 
   els.viewerStage.addEventListener("pointerdown", (event) => {
+    if (state.activeTouchGesture) {
+      return;
+    }
     if (event.target.closest("#transparencyControls")) {
       return;
     }
@@ -861,6 +871,9 @@ function bindEvents() {
   });
 
   els.viewerStage.addEventListener("pointermove", (event) => {
+    if (state.activeTouchGesture) {
+      return;
+    }
     if (state.viewerPointers.has(event.pointerId)) {
       state.viewerPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     }
@@ -889,6 +902,9 @@ function bindEvents() {
   });
 
   const endPointerInteraction = (event) => {
+    if (state.activeTouchGesture) {
+      return;
+    }
     state.viewerPointers.delete(event.pointerId);
     if (state.viewerPointers.size < 2) {
       state.pinchStartDistance = null;
@@ -917,6 +933,11 @@ function bindEvents() {
     event.preventDefault();
     zoom(event.deltaY < 0 ? 1.08 : 1 / 1.08);
   }, { passive: false });
+
+  els.viewerStage.addEventListener("touchstart", handleViewerTouchStart, { passive: false });
+  els.viewerStage.addEventListener("touchmove", handleViewerTouchMove, { passive: false });
+  els.viewerStage.addEventListener("touchend", handleViewerTouchEnd, { passive: false });
+  els.viewerStage.addEventListener("touchcancel", handleViewerTouchEnd, { passive: false });
 }
 
 function renderAll() {
@@ -3424,7 +3445,26 @@ function drawSectionChart(profiles, section, anchorSurveyId = state.surveyId) {
       }
       return;
     }
-    if (state.sectionHoverDistance === null || Math.abs(state.sectionHoverDistance - nextHoverDistance) > 0.5) {
+    if (state.sectionHoverDistance === null || Math.abs(state.sectionHoverDistance - nextHoverDistance) > 0.12) {
+      state.pendingSectionHoverDistance = nextHoverDistance;
+      if (state.pendingSectionHoverFrame) {
+        return;
+      }
+      state.pendingSectionHoverFrame = window.requestAnimationFrame(() => {
+        state.pendingSectionHoverFrame = null;
+        state.sectionHoverDistance = state.pendingSectionHoverDistance;
+        state.pendingSectionHoverDistance = null;
+        drawSectionChart(profiles, section, anchorSurveyId);
+        renderSectionComparisonSummary(profiles, anchorSurveyId);
+        updateSectionHoverFeedback(profiles, section, currentSurvey());
+      });
+    }
+  };
+  const updateSectionHoverImmediately = (event) => {
+    const nextHoverDistance = chartHoverDistanceFromPointer(event, els.profileChart, activeProfiles, {
+      ...chartMetrics
+    });
+    if (nextHoverDistance !== null) {
       state.sectionHoverDistance = nextHoverDistance;
       drawSectionChart(profiles, section, anchorSurveyId);
       renderSectionComparisonSummary(profiles, anchorSurveyId);
@@ -3445,22 +3485,33 @@ function drawSectionChart(profiles, section, anchorSurveyId = state.surveyId) {
     if (event.pointerType === "mouse") {
       return;
     }
+    state.sectionPointerId = event.pointerId;
     event.preventDefault();
     els.profileChart.setPointerCapture?.(event.pointerId);
-    updateSectionHoverFromPointer(event);
+    updateSectionHoverImmediately(event);
   };
   els.profileChart.onpointermove = (event) => {
     if (event.pointerType === "mouse") {
       return;
     }
+    if (state.sectionPointerId !== null && event.pointerId !== state.sectionPointerId) {
+      return;
+    }
     event.preventDefault();
     updateSectionHoverFromPointer(event);
   };
+  els.profileChart.onpointerrawupdate = els.profileChart.onpointermove;
   els.profileChart.onpointerup = (event) => {
     els.profileChart.releasePointerCapture?.(event.pointerId);
+    if (state.sectionPointerId === event.pointerId) {
+      state.sectionPointerId = null;
+    }
   };
   els.profileChart.onpointercancel = (event) => {
     els.profileChart.releasePointerCapture?.(event.pointerId);
+    if (state.sectionPointerId === event.pointerId) {
+      state.sectionPointerId = null;
+    }
   };
   els.profileChart.onmouseleave = () => {
     clearSectionHover();
@@ -4591,6 +4642,109 @@ function zoom(multiplier) {
   applyViewTransform();
 }
 
+function touchPoint(touch) {
+  return {
+    x: touch.clientX,
+    y: touch.clientY
+  };
+}
+
+function handleViewerTouchStart(event) {
+  if (event.target.closest("#transparencyControls")) {
+    return;
+  }
+  state.activeTouchGesture = true;
+  state.viewerPointers.clear();
+
+  if (event.touches.length >= 2) {
+    state.touchGestureMode = "pinch";
+    const first = touchPoint(event.touches[0]);
+    const second = touchPoint(event.touches[1]);
+    beginViewerPinchFromPair(first, second);
+    event.preventDefault();
+    return;
+  }
+
+  const touch = event.touches[0];
+  if (!touch) {
+    return;
+  }
+  state.lastTouchX = touch.clientX;
+  state.lastTouchY = touch.clientY;
+  if (state.compareMode === "slider" && state.scale <= 1) {
+    state.touchGestureMode = "swipe";
+    updateSwipeFromClientX(touch.clientX);
+    event.preventDefault();
+    return;
+  }
+  if (state.scale > 1) {
+    state.touchGestureMode = "pan";
+    state.isPanning = true;
+    event.preventDefault();
+  }
+}
+
+function handleViewerTouchMove(event) {
+  if (!state.activeTouchGesture) {
+    return;
+  }
+
+  if (event.touches.length >= 2) {
+    if (state.touchGestureMode !== "pinch") {
+      state.touchGestureMode = "pinch";
+      beginViewerPinchFromPair(touchPoint(event.touches[0]), touchPoint(event.touches[1]));
+    } else {
+      updateViewerPinchFromPair(touchPoint(event.touches[0]), touchPoint(event.touches[1]));
+    }
+    event.preventDefault();
+    return;
+  }
+
+  const touch = event.touches[0];
+  if (!touch) {
+    return;
+  }
+
+  if (state.touchGestureMode === "swipe" && state.compareMode === "slider" && state.scale <= 1) {
+    updateSwipeFromClientX(touch.clientX);
+    event.preventDefault();
+    return;
+  }
+
+  if (state.touchGestureMode === "pan" && state.scale > 1) {
+    state.panX += touch.clientX - state.lastTouchX;
+    state.panY += touch.clientY - state.lastTouchY;
+    state.lastTouchX = touch.clientX;
+    state.lastTouchY = touch.clientY;
+    applyViewTransform();
+    event.preventDefault();
+  }
+}
+
+function handleViewerTouchEnd(event) {
+  if (event.touches.length >= 2) {
+    beginViewerPinchFromPair(touchPoint(event.touches[0]), touchPoint(event.touches[1]));
+    event.preventDefault();
+    return;
+  }
+  if (event.touches.length === 1) {
+    const touch = event.touches[0];
+    state.lastTouchX = touch.clientX;
+    state.lastTouchY = touch.clientY;
+    state.touchGestureMode = state.scale > 1 ? "pan" : null;
+    state.pinchStartDistance = null;
+    event.preventDefault();
+    return;
+  }
+  state.activeTouchGesture = false;
+  state.touchGestureMode = null;
+  state.isPanning = false;
+  state.pinchStartDistance = null;
+  state.pinchStartCenter = null;
+  state.pinchStageCenter = null;
+  applyViewTransform();
+}
+
 function viewerPointerPair() {
   const pointers = Array.from(state.viewerPointers.values());
   if (pointers.length < 2) {
@@ -4615,7 +4769,10 @@ function beginViewerPinch() {
   if (!pair) {
     return;
   }
-  const [first, second] = pair;
+  beginViewerPinchFromPair(pair[0], pair[1]);
+}
+
+function beginViewerPinchFromPair(first, second) {
   const stageRect = els.viewerStage.getBoundingClientRect();
   state.isPanning = false;
   state.isDraggingSwipe = false;
@@ -4633,10 +4790,16 @@ function beginViewerPinch() {
 
 function updateViewerPinch() {
   const pair = viewerPointerPair();
-  if (!pair || !state.pinchStartDistance || !state.pinchStartCenter || !state.pinchStageCenter) {
+  if (!pair) {
     return;
   }
-  const [first, second] = pair;
+  updateViewerPinchFromPair(pair[0], pair[1]);
+}
+
+function updateViewerPinchFromPair(first, second) {
+  if (!first || !second || !state.pinchStartDistance || !state.pinchStartCenter || !state.pinchStageCenter) {
+    return;
+  }
   const nextCenter = pointerCenter(first, second);
   const nextDistance = Math.max(1, pointerDistance(first, second));
   const nextScale = clamp(state.pinchStartScale * (nextDistance / state.pinchStartDistance), 1, 8);

@@ -1085,6 +1085,8 @@ textarea {
 
 .viewer-compare-controls label {
   gap: 9px;
+  min-width: 0;
+  overflow: hidden;
   padding: 12px 14px;
   border-radius: 18px;
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -1093,6 +1095,10 @@ textarea {
 }
 
 .viewer-compare-controls select {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  text-overflow: ellipsis;
   padding: 8px 10px;
   border: 1px solid rgba(133, 188, 255, 0.28);
   border-radius: 12px;
